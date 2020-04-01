@@ -53,6 +53,12 @@ model = api.model('Model', {
     'password': fields.String("Enter your password")
 })
 
+def getId():
+    import uuid
+    id = uuid.uuid1
+    id = str(id)
+    return id
+
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -114,12 +120,13 @@ class Register(Resource):
     def post(self):
         userId = request.json['userId']
         password = request.json['password']
-        face = mongo.db.FACE
+        face = mongo.db.USER
         user = face.find_one({'userId' : userId})
         if user:
             return jsonify({'message' : 'User already exists'})
         else:
-            face.insert({"userId" : userId,"password" : password , "faceEmbeddings" : None})
+            id = getId()
+            face.insert({"userId" : userId,"password" : password , "id" : id})
             token = jwt.encode({'user' : userId, 'exp' : datetime.datetime.utcnow() + datetime.timedelta(minutes=30)}, app.config['SECRET_KEY'])
             res = make_response({'message' : 'User created successfully'})
             res.set_cookie('token',token)
@@ -132,7 +139,7 @@ class Login(Resource):
     def post(self):
         userId = request.json['userId']
         password = request.json['password']
-        face = mongo.db.FACE
+        face = mongo.db.USER
         user = face.find_one({'userId' : userId})
         if not user:
             return jsonify({"message" : "User not existed. Please register."})
@@ -150,17 +157,16 @@ class Faceid(Resource):
     @token_required
     @api.expect(model)
     def post(self):
-        face = mongo.db.FACE
+        face = mongo.db.EMBD
         userId = request.json["userId"]
         user = face.find_one({'userId' : userId})
-        if user['faceEmbeddings'] == None:
+        if not user:
+            face2 = mongo.db.USER
+            user2 = face2.find_one({'userId' : userId})
+            id = user2['id']
             embeddings = get_embeddings("picture.jpg")
             embeddings = embeddings.tolist()
-            face.find_one_and_update(
-                {"userId" : userId},
-                {"$set":
-                {'faceEmbeddings': embeddings}
-                },upsert=True)
+            face.insert({'id':id,'embeddings':embeddings})
             return jsonify({"message" : "Registration successful"})
         else:
             return jsonify({"message" : "Your Face Embeddings already existed"})
