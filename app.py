@@ -128,7 +128,6 @@ class Register(Resource):
 
 @api.route('/login')
 class Login(Resource):
-    @token_required
     @api.expect(model)
     def post(self):
         userId = request.json['userId']
