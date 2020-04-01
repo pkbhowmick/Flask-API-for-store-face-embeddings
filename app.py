@@ -35,7 +35,7 @@ app.url_map.strict_slashes = False
 
 mongo = PyMongo(app)
 
-authorizations = {
+authorization = {
     'apikey': {
         'type': 'apiKey',
         'in': 'header',
@@ -43,22 +43,20 @@ authorizations = {
     }
 }
 
-api = Api(authorizations=authorizations)
 
-api.init_app(app)
+api = Api(app, version='1.0', title='Store Face Embeddings API',
+    description='A sample API',authorizations=authorization
+)
 
-model = api.model('demo',{
-    'userId':fields.String('Enter userId'),
-    'password':fields.String('Enter Password')
+model = api.model('Model', {
+    'userId': fields.String("Enter your userId"),
+    'password': fields.String("Enter your password")
 })
 
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-
-        token = None
-        if 'JWT-Token' in request.headers:
-            token = request.headers['JWT-Token']
+        token = request.cookies.get('token')
 
         if not token:
             return jsonify({"message" : "Token is missing"}) , 403
@@ -110,10 +108,10 @@ def get_embeddings(filename, required_size=(160, 160)):
     return yhat[0]
 
 
-@api.route('/register',methods=['POST'])
-class register(Resource):
+@api.route('/register')
+class Register(Resource):
     @api.expect(model)
-    def register(self):
+    def post(self):
         userId = request.json['userId']
         password = request.json['password']
         face = mongo.db.FACE
@@ -122,43 +120,51 @@ class register(Resource):
             return jsonify({'message' : 'User already exists'})
         else:
             face.insert({"userId" : userId,"password" : password , "faceEmbeddings" : None})
-            return jsonify({'message' : 'User created successfully'})
-    
+            token = jwt.encode({'user' : userId, 'exp' : datetime.datetime.utcnow() + datetime.timedelta(minutes=30)}, app.config['SECRET_KEY'])
+            res = make_response({'message' : 'User created successfully'})
+            res.set_cookie('token',token)
+            return res
 
-@api.route('/login',methods=['GET','POST'])
-class login(Resource):
-    def login(self):
-        auth = request.authorization
+
+@api.route('/login')
+class Login(Resource):
+    @token_required
+    @api.expect(model)
+    def post(self):
+        userId = request.json['userId']
+        password = request.json['password']
         face = mongo.db.FACE
-        user = face.find_one({'userId' : auth.username})
-        if auth and user and auth.password == user['password']:
-            token = jwt.encode({'user' : auth.username, 'exp' : datetime.datetime.utcnow() + datetime.timedelta(minutes=30)}, app.config['SECRET_KEY'])
+        user = face.find_one({'userId' : userId})
+        if not user:
+            return jsonify({"message" : "User not existed. Please register."})
+        else:
+            if password != user['password']:
+                return jsonify({"message" : "Invalid password"})
+            else:
+                token = jwt.encode({'user' : userId, 'exp' : datetime.datetime.utcnow() + datetime.timedelta(minutes=30)}, app.config['SECRET_KEY'])
+                res = make_response({'token' : token.decode('UTF-8')})
+                res.set_cookie('token',token)
+                return res
 
-            return jsonify({'token' : token.decode('UTF-8')})
-        return make_response('Could not verify!', 401, {'WWW-Authenticate' : 'Basic realm="Login Required"'})
-
-@api.route('/faceid',methods=['POST'])
-class faceid(Resource):
-    @api.doc(security ='apiKey')
+@api.route('/storeEmbeddings')
+class Faceid(Resource):
     @token_required
     @api.expect(model)
     def post(self):
         face = mongo.db.FACE
         userId = request.json["userId"]
-        password = request.json['password']
-
         user = face.find_one({'userId' : userId})
-
-        if user:
-            return jsonify({'message' : 'User already existed'})
-        
-        else:
+        if user['faceEmbeddings'] == None:
             embeddings = get_embeddings("picture.jpg")
             embeddings = embeddings.tolist()
-            face.insert({"userId" : userId, "password" : password, "faceEmbeddings" : embeddings})
-            return jsonify({"message" : "Storing face embeddings successful"})
-
-#api.add_resource(FaceById,"/faceid/<string:userId>")
+            face.find_one_and_update(
+                {"userId" : userId},
+                {"$set":
+                {'faceEmbeddings': embeddings}
+                },upsert=True)
+            return jsonify({"message" : "Registration successful"})
+        else:
+            return jsonify({"message" : "Your Face Embeddings already existed"})
 
 if __name__ == '__main__':
     app.run(debug=True)
