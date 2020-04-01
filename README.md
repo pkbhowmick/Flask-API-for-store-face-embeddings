@@ -4,7 +4,8 @@
 
 # Database Introduction
 
-It has two collections: USER, EMBD:.
+It has two collections: USER, EMBD.
+
 USER:
 - id:(string)
 - userId:(string)
